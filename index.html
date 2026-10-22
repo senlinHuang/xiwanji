@@ -600,6 +600,9 @@ function selectDate(ymd){
 }
 
 boot();
+
+/* ================= 每3分钟自动刷新页面（重新连接、重新提交，恢复正常） ================= */
+setTimeout(function(){ location.reload(); }, 3 * 60 * 1000);
 </script>
 </body>
 </html>
