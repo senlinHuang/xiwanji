@@ -15,6 +15,8 @@ body{margin:0;padding:20px 14px 34px;
 .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
 .hd .t{font-size:17px;font-weight:700;letter-spacing:.5px;}
 .hd .net{font-size:11px;color:#5f7599;letter-spacing:.5px;}
+.reset{margin-left:8px;font-size:12px;color:#60a5fa;cursor:pointer;user-select:none;}
+.reset:hover{color:#93c5fd;text-decoration:underline;}
 .dot{width:10px;height:10px;border-radius:50%;background:#5b6b86;display:inline-block;}
 .dot.wait{background:#ffc24b;box-shadow:0 0 10px #ffc24b;animation:pu 1s infinite;}
 .dot.ok{background:#39d98a;box-shadow:0 0 10px #39d98a;animation:pu 1.6s infinite;}
@@ -55,6 +57,15 @@ body{margin:0;padding:20px 14px 34px;
 .pz.rz{color:#bfe9ff;background:linear-gradient(180deg,#12304a,#0c2135);border-color:#1f5c86;}
 .pw:active,.pz:active{transform:scale(.98);}
 
+/* 历史日志按钮：独立蓝色按钮，避免被 .pz 的属性覆盖 */
+.btnlog{flex:1;width:100%;display:block;padding:13px;border-radius:14px;font-size:15.5px;font-weight:600;
+ cursor:pointer;color:#ffffff;border:1px solid #60a5fa;
+ background:linear-gradient(180deg,#3b82f6,#2563eb);
+ box-shadow:0 6px 16px rgba(37,99,235,.45),inset 0 1px 0 rgba(255,255,255,.22);
+ transition:transform .12s,box-shadow .2s,filter .2s;}
+.btnlog:hover{filter:brightness(1.08);}
+.btnlog:active{transform:scale(.98);box-shadow:0 3px 10px rgba(37,99,235,.4);}
+
 .lock{margin-top:14px;padding:11px;border-radius:12px;background:rgba(255,193,7,.08);
  border:1px solid rgba(255,193,7,.3);color:#ffd35e;font-size:13px;text-align:center;display:none;}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px;}
@@ -77,7 +88,7 @@ body{margin:0;padding:20px 14px 34px;
 <div class="wrap">
   <div class="hd">
     <span class="t">🍽 洗碗机 · 外网控制台</span>
-    <span><span class="net" id="net">公网</span> <span class="dot" id="dot"></span></span>
+    <span><span class="net" id="net">公网</span> <span class="dot" id="dot"></span> <span class="reset" id="resetUid" onclick="resetUid()" title="清除已保存的巴法云ID（换设备/重新填写）" style="display:none;">⟳ 换设备</span></span>
   </div>
 
   <div class="uidbar" id="uidbar">
@@ -101,12 +112,12 @@ body{margin:0;padding:20px 14px 34px;
   </div>
 
   <div class="row2" style="margin-top:12px;">
-    <button class="pz" style="background:linear-gradient(180deg,#3b82f6,#2563eb);color:#fff;border:none;" onclick="openCalendar()">📅 历史日志</button>
+    <button class="btnlog" onclick="openCalendar()">📅 历史日志</button>
   </div>
 
   <!-- 日历弹窗 -->
-  <div id="calendarModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;justify-content:center;align-items:center;">
-    <div style="background:#fff;border-radius:16px;padding:20px;width:90%;max-width:380px;max-height:85vh;overflow-y:auto;">
+  <div id="calendarModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.72);z-index:1000;justify-content:center;align-items:center;padding:16px;box-sizing:border-box;">
+    <div style="background:#fff;border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:85vh;overflow-y:auto;box-shadow:0 20px 50px rgba(0,0,0,.5);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <button onclick="prevMonth()" style="background:#f3f4f6;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;">←</button>
         <div id="calendarTitle" style="font-size:18px;font-weight:700;color:#333;">2026年10月</div>
@@ -152,7 +163,7 @@ var TOPIC_STATUS = "xiwanjizt";       // 状态文字
 var TOPIC_CMD    = "xiwanji001";      // 网页→设备：开关机
 var TOPIC_PAUSE  = "xiwanjipause006"; // 网页→设备：暂停/恢复
 var TOPIC_LOG    = "xiwanjilog";      // 日志查询主题
-function chTopic(i){ return "xiwanji" + ("00"+(i+1)).slice(-3); }
+function chTopic(i){ return "xiwanji" + ("0"+(i+1)).slice(-2) + "006"; }
 
 /* ============================================================ 状态 ============================================================ */
 var names=["进水","循环水","下喷淋","上喷淋","排水阀","水泵","备用 7","备用 8"];
@@ -230,6 +241,12 @@ function publish(topic,msg){
   if(demo) return;
   if(client && client.connected) client.publish(topic+"/set", msg, {qos:0});
 }
+/* 日志指令专用：必须发到 xiwanjilog/set（巴法云规则：纯主题不推送，只有 /set 才推给订阅者） */
+function pubLog(msg){
+  if(demo||!client||!client.connected) return false;
+  client.publish(TOPIC_LOG+"/set", msg, {qos:0});
+  return true;
+}
 function doPower(){
   if(busy) return; busy=1;
   if(demo){ var d=window.__demo; d.running=!d.running; setRemain(d.running?'剩余12分30秒':'待机'); return; }
@@ -252,11 +269,28 @@ function toggle(i){
 
 /* ============================================================ UI 辅助 ============================================================ */
 function showUidForm(tip){
+  hideResetBtn();                 // 显示输入框时隐藏“换设备”按钮
   document.getElementById('uidbar').style.display='block';
   if(tip) document.getElementById('uidtip').innerText=tip;
   if(uid) document.getElementById('uid').value=uid;
 }
 function hideUidForm(){ document.getElementById('uidbar').style.display='none'; }
+
+/* 已记住 UID 后，在标题栏显示“⟳ 换设备”入口，点它主动清除并重新弹框 */
+function showResetBtn(){ var e=document.getElementById('resetUid'); if(e) e.style.display='inline-block'; }
+function hideResetBtn(){ var e=document.getElementById('resetUid'); if(e) e.style.display='none'; }
+function resetUid(){
+  // 同时清空 localStorage 与 Cookie 两处备份
+  try{ localStorage.removeItem(LSK); }catch(e){}
+  try{ document.cookie = CK + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax'; }catch(e){}
+  uid=''; hadUid=false;
+  if(client){ try{ client.end(true); }catch(e){} client=null; }
+  setDot(0);
+  document.getElementById('net').innerText='公网';
+  hideResetBtn();
+  showUidForm('已清除保存的巴法云ID，请重新填写（仅此一次，之后自动记住）');
+  document.getElementById('st').innerText='等待填写 ID';
+}
 
 /* ============================================================ 连接：用 UID 作 ClientID 连巴法云 WebSocket ============================================================ */
 function connectWith(id){
@@ -274,6 +308,7 @@ function connectWith(id){
   client.on('connect', function(){
     setDot(2);
     hideUidForm();                 // 一旦连上就隐藏输入框（已记住或刚填写）
+    showResetBtn();                // 已连上 → 显示“换设备”清除入口
     document.getElementById('net').innerText='公网已连';
     // 订阅主题（固件已改成直接发布到基础主题，不带 /up）
     client.subscribe(TOPIC_STATUS,      {qos:0});
@@ -282,10 +317,9 @@ function connectWith(id){
     for(var i=0;i<8;i++){ var t=chTopic(i); client.subscribe(t,{qos:0}); }
     document.getElementById('st').innerText='已连接，等待设备数据…';
     
-    // 同步网页时间给ESP32，解决NTP同步失败问题
-    var now = new Date();
-    var ts = Math.floor(now.getTime() / 1000);
-    client.publish(TOPIC_LOG, 'time:' + ts, {qos:0});
+    // 同步网页时间给ESP32（解决NTP同步失败问题）—— 必须发 /set 才会推送到设备
+    var ts = Math.floor(new Date().getTime() / 1000);
+    client.publish(TOPIC_LOG+'/set', 'time:' + ts, {qos:0});
     console.log('已同步时间给ESP32:', ts);
     
     // 8 秒后判定：本就没UID(首次)→弹输入框；已记住UID→只提示可能离线，绝不弹框
@@ -371,72 +405,66 @@ function enableDemo(){
   },1000);
 }
 
-/* ============================================================ 日历日志功能（纯网页本地存储） ============================================================ */
+/* ============================================================ 日历日志功能 ============================================================ */
 var calYear, calMonth;
 var logDates = {};  // 有日志的日期集合，key 是 YYYYMMDD
 var currentLogContent = "";
 var currentSelectedDate = "";
+var logListGot = false;   // 是否收到过设备回传的 LIST（用于诊断：区分“固件没响应”还是“确实没日志”）
+var autoOpenedToday = false;  // 本次打开弹窗是否已自动加载当天日志
 
-// 记录日志事件到本地
-function addLogEvent(event) {
-  var now = new Date();
-  // 日期 key: YYYYMMDD
-  var y = now.getFullYear();
-  var m = ('0' + (now.getMonth()+1)).slice(-2);
-  var d = ('0' + now.getDate()).slice(-2);
-  var dateKey = '' + y + m + d;
-  // 时间字符串: HH:MM:SS
-  var h = ('0' + now.getHours()).slice(-2);
-  var min = ('0' + now.getMinutes()).slice(-2);
-  var s = ('0' + now.getSeconds()).slice(-2);
-  var timeStr = h + ':' + min + ':' + s;
-  
-  // 读现有日志
-  var key = 'dishwasher_log_' + dateKey;
-  var existing = localStorage.getItem(key) || '';
-  existing += '[' + timeStr + '] ' + event + '\n';
-  localStorage.setItem(key, existing);
-  
-  // 清理30天前的旧日志
-  cleanupOldLogs();
-}
-
-// 清理30天前的旧日志
-function cleanupOldLogs() {
-  var now = new Date();
-  for (var i = 0; i < localStorage.length; i++) {
-    var k = localStorage.key(i);
-    if (k.startsWith('dishwasher_log_')) {
-      var datePart = k.substring(15, 23); // YYYYMMDD
-      var y = parseInt(datePart.substring(0,4));
-      var m = parseInt(datePart.substring(4,6)) - 1;
-      var d = parseInt(datePart.substring(6,8));
-      var logDate = new Date(y, m, d);
-      var diffDays = (now - logDate) / (1000*60*60*24);
-      if (diffDays > 30) {
-        localStorage.removeItem(k);
+// 处理日志消息
+function handleLogMessage(s) {
+  if(!s) return;
+  if(s.startsWith("TIME_OK:")){
+    // 时间校验成功，静默忽略（可自行打 console）
+    return;
+  }
+  if(s.startsWith("LIST:")){
+    var dates = s.substring(5).trim();
+    logListGot = true;   // 收到设备回传，说明固件是新版且在线
+    logDates = {};
+    if(dates){
+      var arr = dates.split(",");
+      for(var i=0;i<arr.length;i++){
+        var d=arr[i].trim();
+        if(d) logDates[d] = true;
       }
     }
-  }
-}
-
-// 从本地获取所有有日志的日期
-function getLocalLogDates() {
-  var dates = {};
-  for (var i = 0; i < localStorage.length; i++) {
-    var k = localStorage.key(i);
-    if (k.startsWith('dishwasher_log_')) {
-      var datePart = k.substring(15, 23); // YYYYMMDD
-      dates[datePart] = true;
+    renderCalendar();
+    // 列表返回后：若用户还没手动点日期，自动加载【今天】的日志
+    var today = todayYmd();
+    if(!autoOpenedToday){
+      autoOpenedToday = true;
+      if(logDates[today]){
+        selectDate(today);          // 今天有记录 → 直接摊开当天日志
+      }else{
+        document.getElementById('logContent').innerText =
+          dates ? "今天还没有日志记录\n\n蓝色日期表示当天有记录，点击即可查看"
+                : "设备暂无历史日志（可能尚未产生记录或时间未同步）";
+      }
     }
+    return;
   }
-  return dates;
+  if(s.startsWith("LOG:")){
+    var body = s.substring(4);
+    if(body === "END"){
+      // 日志接收完成
+      document.getElementById('logContent').innerText =
+        currentLogContent || (currentSelectedDate + " 当天没有日志记录");
+      return;
+    }
+    currentLogContent += body + "\n";
+    // 实时显示，边收边看
+    document.getElementById('logContent').innerText = currentLogContent;
+    return;
+  }
 }
 
-// 从本地获取指定日期的日志内容
-function getLocalLogContent(dateKey) {
-  var key = 'dishwasher_log_' + dateKey;
-  return localStorage.getItem(key) || '';
+// 今天的 YYYYMMDD（用手机本地时间，与设备同步后的日期一致）
+function todayYmd(){
+  var n = new Date();
+  return "" + n.getFullYear() + ("0"+(n.getMonth()+1)).slice(-2) + ("0"+n.getDate()).slice(-2);
 }
 
 // 打开日历
@@ -445,18 +473,33 @@ function openCalendar(){
   calYear = now.getFullYear();
   calMonth = now.getMonth();
   currentLogContent = "";
+  currentSelectedDate = todayYmd();     // 默认选中今天
+  logListGot = false;
+  autoOpenedToday = false;
   document.getElementById('logContent').innerText = "正在加载日志列表...";
   document.getElementById('calendarModal').style.display = 'flex';
   renderCalendar();
-  // 向ESP32查询日志列表
+  // 查询日期列表
   if(client && client.connected){
-    // 先同步时间给ESP32
+    // 先同步时间给ESP32（/set 才会推送到设备）
     var nowTs = Math.floor(new Date().getTime() / 1000);
-    client.publish(TOPIC_LOG, 'time:' + nowTs, {qos:0});
+    client.publish(TOPIC_LOG+'/set', 'time:' + nowTs, {qos:0});
     // 再查询日志列表
     setTimeout(function(){
-      client.publish(TOPIC_LOG, "list");
-    }, 500);
+      pubLog("list");
+    }, 600);
+    // 2.6 秒后若仍未收到设备回传的 LIST，给出明确诊断：
+    //   —— 用于区分“固件无日志功能/设备离线/UID错” 与 “固件正常但确实没日志”
+    setTimeout(function(){
+      if(!logListGot){
+        document.getElementById('logContent').innerText =
+          "⚠ 未收到设备日志回复，请排查：\n"+
+          "① ESP32 是否联网且在线（看屏幕剩余时间/状态能否刷新）\n"+
+          "② 是否烧录了【含日志功能】的最新固件（旧固件无此功能，必现空白）\n"+
+          "③ 巴法云 UID 是否正确\n"+
+          "自检：电脑连 ESP32 串口，看启动是否打印『日志系统 SPIFFS 挂载成功』";
+      }
+    }, 2600);
   } else {
     document.getElementById('logContent').innerText = "MQTT未连接，请稍后再试";
   }
@@ -486,33 +529,43 @@ function renderCalendar(){
   document.getElementById('calendarTitle').innerText = calYear + "年" + (calMonth+1) + "月";
   var firstDay = new Date(calYear, calMonth, 1).getDay();  // 当月第一天是星期几
   var daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
-  
+  var today = todayYmd();
+
   var html = "";
   // 前面的空格
   for(var i=0;i<firstDay;i++){
     html += '<div style="padding:8px;"></div>';
   }
-  
-  // 日期
+
+  // 日期：有日志 → 蓝底白字；今天 → 蓝框；选中 → 白圈加亮
   for(var d=1; d<=daysInMonth; d++){
     var ymd = "" + calYear + ("0"+(calMonth+1)).slice(-2) + ("0"+d).slice(-2);
-    var hasLog = logDates[ymd];
-    var bg = hasLog ? '#3b82f6' : '#f3f4f6';
-    var color = hasLog ? '#fff' : '#333';
-    var fontWeight = hasLog ? 'bold' : 'normal';
-    html += '<div onclick="selectDate(\''+ymd+'\')" style="padding:8px;border-radius:8px;cursor:pointer;background:'+bg+';color:'+color+';font-weight:'+fontWeight+';font-size:14px;">'+d+'</div>';
+    var hasLog = !!logDates[ymd];
+    var isToday = (ymd === today);
+    var isSel = (ymd === currentSelectedDate);
+
+    var bg = hasLog ? 'linear-gradient(180deg,#3b82f6,#2563eb)' : '#f3f4f6';
+    var color = hasLog ? '#ffffff' : '#333333';
+    var border = isToday ? '2px solid #1d4ed8' : '1px solid ' + (hasLog ? '#2563eb' : '#e5e7eb');
+    var shadow = isSel ? 'box-shadow:0 0 0 2px #ffffff,0 0 0 4px #2563eb;' : '';
+    var weight = hasLog ? 'bold' : 'normal';
+
+    html += '<div onclick="selectDate(\''+ymd+'\')" style="padding:8px 0;border-radius:10px;cursor:pointer;'
+          + 'background:'+bg+';color:'+color+';border:'+border+';font-weight:'+weight+';font-size:14px;'
+          + shadow + '">' + d + '</div>';
   }
-  
+
   document.getElementById('calendarDays').innerHTML = html;
 }
 
 // 选择日期，查询日志
 function selectDate(ymd){
-  currentSelectedDate = ymd;
+  currentSelectedDate = ymd;      // 记住选中，日历会高亮该日
   currentLogContent = "";
-  document.getElementById('logContent').innerText = "正在加载日志...";
+  renderCalendar();               // 立即刷新高亮，给出点击反馈
+  document.getElementById('logContent').innerText = "正在加载 " + ymd + " 的日志...";
   if(client && client.connected){
-    client.publish(TOPIC_LOG, "date:" + ymd);
+    pubLog("date:" + ymd);
   } else {
     document.getElementById('logContent').innerText = "MQTT未连接，请稍后再试";
   }
