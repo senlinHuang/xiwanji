@@ -152,7 +152,7 @@ var TOPIC_STATUS = "xiwanjizt";       // 状态文字
 var TOPIC_CMD    = "xiwanji001";      // 网页→设备：开关机
 var TOPIC_PAUSE  = "xiwanjipause006"; // 网页→设备：暂停/恢复
 var TOPIC_LOG    = "xiwanjilog";      // 日志查询主题
-function chTopic(i){ return "xiwanji" + ("0"+(i+1)).slice(-2) + "006"; }
+function chTopic(i){ return "xiwanji" + ("00"+(i+1)).slice(-3); }
 
 /* ============================================================ 状态 ============================================================ */
 var names=["进水","循环水","下喷淋","上喷淋","排水阀","水泵","备用 7","备用 8"];
