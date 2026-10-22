@@ -250,6 +250,7 @@ function pubLog(msg){
 function doPower(){
   if(busy) return; busy=1;
   if(demo){ var d=window.__demo; d.running=!d.running; setRemain(d.running?'剩余12分30秒':'待机'); return; }
+  if(!ensureConnected()){ busy=0; return; }
   publish(TOPIC_CMD, run?"off":"on");
   run=!run; updateUI();
 }
@@ -257,12 +258,14 @@ function doPause(){
   if(busy) return; busy=1;
   if(demo){ var d=window.__demo; d.paused=!d.paused;
     setRemain(d.running?(d.paused?'已暂停，剩余12分30秒':'剩余12分30秒'):'待机'); return; }
+  if(!ensureConnected()){ busy=0; return; }
   publish(TOPIC_PAUSE, paused?"off":"on");
   paused=!paused; updateUI();
 }
 function toggle(i){
   if(auto||busy) return; busy=1;
   if(demo){ var d=window.__demo; d.ch[i]=!d.ch[i]; setCh(i,d.ch[i]); return; }
+  if(!ensureConnected()){ busy=0; return; }
   publish(chTopic(i), ch[i]?"off":"on");
   ch[i]=!ch[i]; setCh(i,ch[i]);
 }
@@ -292,6 +295,26 @@ function resetUid(){
   document.getElementById('st').innerText='等待填写 ID';
 }
 
+/* 心跳保活：每30秒发一条轻量消息，防止运营商NAT/WebSocket空闲超时把连接静默掐断（“过几分钟就操作不了”的主因） */
+var hbTimer=null;
+function startHeartbeat(){
+  if(hbTimer) clearInterval(hbTimer);
+  hbTimer=setInterval(function(){
+    if(client && client.connected){
+      try{ client.publish("xiwanjihb", "1", {qos:0}); }catch(e){}
+    }
+  }, 30000);
+}
+/* 操作前检查连接：断了就提示并触发重连，避免“点了没反应” */
+function ensureConnected(){
+  if(client && client.connected) return true;
+  setDot(3);
+  document.getElementById('net').innerText='公网断开·重连中';
+  document.getElementById('st').innerText='连接已断开，正在自动重连…';
+  if(client){ try{ client.reconnect(); }catch(e){} }
+  return false;
+}
+
 /* ============================================================ 连接：用 UID 作 ClientID 连巴法云 WebSocket ============================================================ */
 function connectWith(id){
   uid=(id||'').trim();
@@ -301,8 +324,8 @@ function connectWith(id){
   document.getElementById('st').innerText='正在连接云端…';
 
   client = mqtt.connect('wss://bemfa.com:9504/wss', {
-    clientId: uid, clean:true, reconnectPeriod:4000, connectTimeout:8000,
-    protocolVersion:4, keepalive:60, username:'', password:''
+    clientId: uid, clean:true, reconnectPeriod:3000, connectTimeout:8000,
+    protocolVersion:4, keepalive:30, username:'', password:''
   });
 
   client.on('connect', function(){
@@ -316,6 +339,7 @@ function connectWith(id){
     client.subscribe(TOPIC_LOG,        {qos:0});
     for(var i=0;i<8;i++){ var t=chTopic(i); client.subscribe(t,{qos:0}); }
     document.getElementById('st').innerText='已连接，等待设备数据…';
+    startHeartbeat();              // 启动应用层心跳，防止空闲被掐断
     
     // 同步网页时间给ESP32（解决NTP同步失败问题）—— 必须发 /set 才会推送到设备
     var ts = Math.floor(new Date().getTime() / 1000);
@@ -351,9 +375,13 @@ function connectWith(id){
     else if(base in chBase){ setCh(chBase[base], s==='on'); }
   });
 
-  client.on('reconnect', function(){ setDot(1); });
-  client.on('close',      function(){ setDot(0); document.getElementById('net').innerText='公网断开'; });
-  client.on('error',      function(e){ console.log('mqtt error', e); setDot(3); });
+  client.on('reconnect', function(){ setDot(1); document.getElementById('net').innerText='公网·重连中'; });
+  client.on('close',      function(){
+    setDot(0);
+    document.getElementById('net').innerText='公网断开·重连中';
+    document.getElementById('st').innerText='连接已断开，正在自动重连…';
+  });
+  client.on('error',      function(e){ console.log('mqtt error', e); setDot(3); document.getElementById('st').innerText='连接出错，正在重连…'; });
 }
 
 function manualConnect(){
