@@ -172,6 +172,11 @@ var ch=[0,0,0,0,0,0,0,0], run=0, paused=0, auto=0, busy=0;
 var client=null, demo=false, hadUid=false;
 var LSK='bemfa_uid', CK='bemfa_uid_v1', uid='';
 
+/* 本机当日操作镜像（只做即时反馈，设备 Flash 回传的历史才是准）。
+   键名前缀 web_log_，与 UID 存储分开；清浏览器数据即清空，不跨设备同步。 */
+var LOCAL_LOG_PREFIX = 'web_log_';
+var localLog = {};   // date(YYYYMMDD) -> 本机记录文本
+
 /* 主题名 → 通道序号（去掉 /up、/set 后缀后匹配） */
 var chBase={};
 for(var i=0;i<8;i++){ chBase[chTopic(i)] = i; }
@@ -194,6 +199,47 @@ function loadUid(){
     if(m&&m[1]){ var c=decodeURIComponent(m[1]); if(c.trim()) return c.trim(); }
   }catch(e){}
   return '';
+}
+
+/* ---------- 本机镜像读写 ---------- */
+function localLogKey(dateKey){ return LOCAL_LOG_PREFIX + dateKey; }
+// 开机时把本机镜像读进内存
+function loadLocalLogs(){
+  localLog = {};
+  try{
+    for(var i=0;i<localStorage.length;i++){
+      var k = localStorage.key(i);
+      if(k && k.indexOf(LOCAL_LOG_PREFIX)===0){
+        var d = k.substring(LOCAL_LOG_PREFIX.length);
+        localLog[d] = localStorage.getItem(k) || '';
+      }
+    }
+  }catch(e){}
+}
+// 点按钮时即时记一条到本机镜像；日历开着就立刻把今天标蓝
+function addLocalLog(event){
+  var now = new Date();
+  var ymd = todayYmd();
+  var h=('0'+now.getHours()).slice(-2), m=('0'+now.getMinutes()).slice(-2), s=('0'+now.getSeconds()).slice(-2);
+  var line = '['+h+':'+m+':'+s+'] '+event+'\n';
+  localLog[ymd] = (localLog[ymd]||'') + line;
+  try{ localStorage.setItem(localLogKey(ymd), localLog[ymd]); }catch(e){}
+  if(document.getElementById('calendarModal').style.display==='flex'){
+    logDates[ymd] = true;
+    renderCalendar();
+  }
+}
+// 把本机未回传的记录合并到设备文本后面（逐条去重）
+function mergeLocalInto(deviceText, ymd){
+  var local = localLog[ymd] || '';
+  if(!local) return deviceText;
+  var devLines = (deviceText||'').split('\n');
+  var add = [];
+  local.split('\n').forEach(function(ln){ if(ln && devLines.indexOf(ln)<0) add.push(ln); });
+  if(!add.length) return deviceText;
+  var sep = (deviceText && deviceText.trim()) ? '\n—— 本机操作记录（设备未回传，仅供本机查看）——\n'
+                                              : '—— 本机操作记录（设备未回传，仅供本机查看）——\n';
+  return (deviceText||'') + sep + add.join('\n');
 }
 
 var g=document.getElementById('grid');
@@ -251,6 +297,7 @@ function pubLog(msg){
 function doPower(){
   if(busy) return; busy=1;
   if(demo){ var d=window.__demo; d.running=!d.running; setRemain(d.running?'剩余12分30秒':'待机'); return; }
+  addLocalLog(run ? "用户点击关机" : "用户点击开机");
   if(!ensureConnected()){ busy=0; return; }
   publish(TOPIC_CMD, run?"off":"on");
   run=!run; updateUI();
@@ -259,6 +306,7 @@ function doPause(){
   if(busy) return; busy=1;
   if(demo){ var d=window.__demo; d.paused=!d.paused;
     setRemain(d.running?(d.paused?'已暂停，剩余12分30秒':'剩余12分30秒'):'待机'); return; }
+  addLocalLog(paused ? "用户点击恢复运行" : "用户点击暂停");
   if(!ensureConnected()){ busy=0; return; }
   publish(TOPIC_PAUSE, paused?"off":"on");
   paused=!paused; updateUI();
@@ -266,6 +314,7 @@ function doPause(){
 function toggle(i){
   if(auto||busy) return; busy=1;
   if(demo){ var d=window.__demo; d.ch[i]=!d.ch[i]; setCh(i,d.ch[i]); return; }
+  addLocalLog("用户手动开关CH" + (i+1) + (ch[i] ? "（关）" : "（开）"));
   if(!ensureConnected()){ busy=0; return; }
   publish(chTopic(i), ch[i]?"off":"on");
   ch[i]=!ch[i]; setCh(i,ch[i]);
@@ -286,6 +335,12 @@ function hideResetBtn(){ var e=document.getElementById('resetUid'); if(e) e.styl
 function resetUid(){
   // 同时清空 localStorage 与 Cookie 两处备份
   try{ localStorage.removeItem(LSK); }catch(e){}
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf(LOCAL_LOG_PREFIX)===0) localStorage.removeItem(k);
+    });
+  }catch(e){}
+  localLog = {};
   try{ document.cookie = CK + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax'; }catch(e){}
   uid=''; hadUid=false;
   if(client){ try{ client.end(true); }catch(e){} client=null; }
@@ -395,6 +450,7 @@ function manualConnect(){
 
 /* ============================================================ 启动 ============================================================ */
 function boot(){
+  loadLocalLogs();
   if(location.search.indexOf('demo')>=0){ enableDemo(); return; }
 
   if(typeof mqtt==='undefined'){
@@ -487,6 +543,8 @@ function handleLogMessage(s) {
         if(d) logDates[d] = true;
       }
     }
+    // 合并本机镜像里的日期（设备列表之外的本机记录也标蓝）
+    for(var ld in localLog){ if(localLog[ld]) logDates[ld] = true; }
     renderCalendar();
     // 列表返回后：若用户还没手动点日期，自动加载【今天】的日志
     var today = todayYmd();
@@ -505,9 +563,10 @@ function handleLogMessage(s) {
   if(s.startsWith("LOG:")){
     var body = s.substring(4);
     if(body === "END"){
-      // 日志接收完成
+      // 日志接收完成：设备文本为准，再把本机未回传的记录合并到后面
+      var finalText = mergeLocalInto(currentLogContent, currentSelectedDate);
       document.getElementById('logContent').innerText =
-        currentLogContent || (currentSelectedDate + " 当天没有日志记录");
+        finalText || (currentSelectedDate + " 当天没有日志记录");
       return;
     }
     // 【关键】设备端已按行分片回传，每片都自带原始换行，这里必须原样拼接，
@@ -561,6 +620,12 @@ function queryLogOnce(){
 
 // 多次查询仍无回传：给出具体排查指引
 function showLogNoReply(){
+  var loc = localLog[currentSelectedDate] || '';
+  if(loc){
+    document.getElementById('logContent').innerText =
+      "⚠ 设备未回传，以下仅为本机浏览器记录（不跨设备）：\n\n" + loc;
+    return;
+  }
   document.getElementById('logContent').innerText =
     "⚠ 已多次向设备查询，但未收到任何回传。请排查：\n"+
     "① ESP32 是否在线（看屏幕剩余时间/状态能否正常刷新）\n"+
@@ -583,6 +648,9 @@ function openCalendar(){
   autoOpenedToday = false;
   logQueryCount = 0;
   diagShown = false;
+  loadLocalLogs();                 // 先读本机镜像
+  logDates = {};
+  for(var ld in localLog){ if(localLog[ld]) logDates[ld] = true; }
   var dg = document.getElementById('logDiag');
   if(dg){ dg.innerText = ''; dg.style.color = '#b26a00'; dg.style.background = '#fff8e1'; }
   document.getElementById('logContent').innerText = "正在加载日志列表...";
@@ -606,7 +674,10 @@ function openCalendar(){
       queryLogOnce();
     }, 1200);
   } else {
-    document.getElementById('logContent').innerText = "MQTT未连接，请稍后再试";
+    var loc0 = localLog[currentSelectedDate] || '';
+    document.getElementById('logContent').innerText = loc0
+      ? "⚠ 设备未连接，以下仅为本机浏览器记录（不跨设备）：\n\n" + loc0
+      : "MQTT未连接，请稍后再试";
   }
 }
 
@@ -668,8 +739,10 @@ function selectDate(ymd){
   currentSelectedDate = ymd;      // 记住选中，日历会高亮该日
   currentLogContent = "";
   renderCalendar();               // 立即刷新高亮，给出点击反馈
+  var localHere = localLog[ymd] || '';
   document.getElementById('logContent').innerText = "正在加载 " + ymd + " 的日志...";
   if(client && client.connected){
+    if(localHere) document.getElementById('logContent').innerText = "（等待设备回传，先显示本机记录）\n\n" + localHere;
     pubLog("date:" + ymd);
     // 1.5 秒后若仍在加载（没收到回传），重发一次，对抗偶发丢包
     setTimeout(function(){
@@ -678,7 +751,9 @@ function selectDate(ymd){
       }
     }, 1500);
   } else {
-    document.getElementById('logContent').innerText = "MQTT未连接，请稍后再试";
+    document.getElementById('logContent').innerText = localHere
+      ? "⚠ 设备未连接，以下仅为本机浏览器记录（不跨设备）：\n\n" + localHere
+      : "MQTT未连接，请稍后再试";
   }
 }
 
