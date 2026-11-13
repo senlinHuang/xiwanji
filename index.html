@@ -134,7 +134,6 @@ body{margin:0;padding:20px 14px 34px;
       </div>
       <div id="calendarDays" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;">
       </div>
-      <div id="logDiag" style="margin-top:10px;font-size:12px;color:#b26a00;background:#fff8e1;border-radius:8px;padding:8px;line-height:1.5;"></div>
       <div style="margin-top:16px;">
         <div id="logContent" style="background:#f9fafb;border-radius:8px;padding:12px;min-height:100px;font-size:13px;color:#333;white-space:pre-wrap;font-family:Consolas,monospace;">
           点击有记录的日期查看日志
@@ -172,11 +171,6 @@ var ch=[0,0,0,0,0,0,0,0], run=0, paused=0, auto=0, busy=0;
 var client=null, demo=false, hadUid=false;
 var LSK='bemfa_uid', CK='bemfa_uid_v1', uid='';
 
-/* 本机当日操作镜像（只做即时反馈，设备 Flash 回传的历史才是准）。
-   键名前缀 web_log_，与 UID 存储分开；清浏览器数据即清空，不跨设备同步。 */
-var LOCAL_LOG_PREFIX = 'web_log_';
-var localLog = {};   // date(YYYYMMDD) -> 本机记录文本
-
 /* 主题名 → 通道序号（去掉 /up、/set 后缀后匹配） */
 var chBase={};
 for(var i=0;i<8;i++){ chBase[chTopic(i)] = i; }
@@ -199,47 +193,6 @@ function loadUid(){
     if(m&&m[1]){ var c=decodeURIComponent(m[1]); if(c.trim()) return c.trim(); }
   }catch(e){}
   return '';
-}
-
-/* ---------- 本机镜像读写 ---------- */
-function localLogKey(dateKey){ return LOCAL_LOG_PREFIX + dateKey; }
-// 开机时把本机镜像读进内存
-function loadLocalLogs(){
-  localLog = {};
-  try{
-    for(var i=0;i<localStorage.length;i++){
-      var k = localStorage.key(i);
-      if(k && k.indexOf(LOCAL_LOG_PREFIX)===0){
-        var d = k.substring(LOCAL_LOG_PREFIX.length);
-        localLog[d] = localStorage.getItem(k) || '';
-      }
-    }
-  }catch(e){}
-}
-// 点按钮时即时记一条到本机镜像；日历开着就立刻把今天标蓝
-function addLocalLog(event){
-  var now = new Date();
-  var ymd = todayYmd();
-  var h=('0'+now.getHours()).slice(-2), m=('0'+now.getMinutes()).slice(-2), s=('0'+now.getSeconds()).slice(-2);
-  var line = '['+h+':'+m+':'+s+'] '+event+'\n';
-  localLog[ymd] = (localLog[ymd]||'') + line;
-  try{ localStorage.setItem(localLogKey(ymd), localLog[ymd]); }catch(e){}
-  if(document.getElementById('calendarModal').style.display==='flex'){
-    logDates[ymd] = true;
-    renderCalendar();
-  }
-}
-// 把本机未回传的记录合并到设备文本后面（逐条去重）
-function mergeLocalInto(deviceText, ymd){
-  var local = localLog[ymd] || '';
-  if(!local) return deviceText;
-  var devLines = (deviceText||'').split('\n');
-  var add = [];
-  local.split('\n').forEach(function(ln){ if(ln && devLines.indexOf(ln)<0) add.push(ln); });
-  if(!add.length) return deviceText;
-  var sep = (deviceText && deviceText.trim()) ? '\n—— 本机操作记录（设备未回传，仅供本机查看）——\n'
-                                              : '—— 本机操作记录（设备未回传，仅供本机查看）——\n';
-  return (deviceText||'') + sep + add.join('\n');
 }
 
 var g=document.getElementById('grid');
@@ -297,7 +250,6 @@ function pubLog(msg){
 function doPower(){
   if(busy) return; busy=1;
   if(demo){ var d=window.__demo; d.running=!d.running; setRemain(d.running?'剩余12分30秒':'待机'); return; }
-  addLocalLog(run ? "用户点击关机" : "用户点击开机");
   if(!ensureConnected()){ busy=0; return; }
   publish(TOPIC_CMD, run?"off":"on");
   run=!run; updateUI();
@@ -306,7 +258,6 @@ function doPause(){
   if(busy) return; busy=1;
   if(demo){ var d=window.__demo; d.paused=!d.paused;
     setRemain(d.running?(d.paused?'已暂停，剩余12分30秒':'剩余12分30秒'):'待机'); return; }
-  addLocalLog(paused ? "用户点击恢复运行" : "用户点击暂停");
   if(!ensureConnected()){ busy=0; return; }
   publish(TOPIC_PAUSE, paused?"off":"on");
   paused=!paused; updateUI();
@@ -314,7 +265,6 @@ function doPause(){
 function toggle(i){
   if(auto||busy) return; busy=1;
   if(demo){ var d=window.__demo; d.ch[i]=!d.ch[i]; setCh(i,d.ch[i]); return; }
-  addLocalLog("用户手动开关CH" + (i+1) + (ch[i] ? "（关）" : "（开）"));
   if(!ensureConnected()){ busy=0; return; }
   publish(chTopic(i), ch[i]?"off":"on");
   ch[i]=!ch[i]; setCh(i,ch[i]);
@@ -335,12 +285,6 @@ function hideResetBtn(){ var e=document.getElementById('resetUid'); if(e) e.styl
 function resetUid(){
   // 同时清空 localStorage 与 Cookie 两处备份
   try{ localStorage.removeItem(LSK); }catch(e){}
-  try{
-    Object.keys(localStorage).forEach(function(k){
-      if(k.indexOf(LOCAL_LOG_PREFIX)===0) localStorage.removeItem(k);
-    });
-  }catch(e){}
-  localLog = {};
   try{ document.cookie = CK + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax'; }catch(e){}
   uid=''; hadUid=false;
   if(client){ try{ client.end(true); }catch(e){} client=null; }
@@ -371,7 +315,13 @@ function ensureConnected(){
   return false;
 }
 
-/* ============================================================ 连接：用 UID 作 ClientID 连巴法云 WebSocket ============================================================ */
+/* ============================================================ 连接：ClientID 必须就是巴法云私钥 UID ============================================================ */
+//【实测结论·2026-11-14】巴法云只认“私钥 UID 本身”当 ClientID：
+//  同一台电脑用 mqtt.js 实测：clientId=UID → 连接成功，2 秒一条收到“剩余07分34秒”；
+//  clientId=UID+"_web" → 直接 Connection refused: Not authorized（未授权，连不上）。
+//  官方文档也是这个口径：ClientID 填私钥，用户名密码留空；ClientID 不匹配时才会改要求
+//  appID/secretKey 认证。所以这里【必须】用纯 UID，设备与网页同一身份可共存，
+//  设备照常上报，网页照常收回剩余时间/状态/日志，不会互踢。
 function connectWith(id){
   uid=(id||'').trim();
   if(!uid){ showUidForm('请先填写巴法云 UID'); return; }
@@ -380,7 +330,7 @@ function connectWith(id){
   document.getElementById('st').innerText='正在连接云端…';
 
   client = mqtt.connect('wss://bemfa.com:9504/wss', {
-    clientId: uid + "_web", clean:true, reconnectPeriod:3000, connectTimeout:8000,
+    clientId: uid, clean:true, reconnectPeriod:3000, connectTimeout:8000,
     protocolVersion:4, keepalive:30, username:'', password:''
   });
 
@@ -396,6 +346,13 @@ function connectWith(id){
     for(var i=0;i<8;i++){ var t=chTopic(i); client.subscribe(t,{qos:0}); }
     document.getElementById('st').innerText='已连接，等待设备数据…';
     startHeartbeat();              // 启动应用层心跳，防止空闲被掐断
+    //【新增】如果刷新前日历是打开状态，这里自动重新打开并重新向设备拉一次日志
+    //  （只是重新读设备，日志内容本身不在浏览器里存任何一份）
+    try{
+      if(sessionStorage.getItem('xiwanjiLogOpen')==='1'){
+        setTimeout(function(){ openCalendar(); }, 1500);
+      }
+    }catch(e){}
     
     // 同步网页时间给ESP32（解决NTP同步失败问题）—— 必须发 /set 才会推送到设备
     var ts = Math.floor(new Date().getTime() / 1000);
@@ -450,7 +407,6 @@ function manualConnect(){
 
 /* ============================================================ 启动 ============================================================ */
 function boot(){
-  loadLocalLogs();
   if(location.search.indexOf('demo')>=0){ enableDemo(); return; }
 
   if(typeof mqtt==='undefined'){
@@ -494,39 +450,32 @@ function enableDemo(){
 var calYear, calMonth;
 var logDates = {};  // 有日志的日期集合，key 是 YYYYMMDD
 var currentLogContent = "";
+
+/* 【新增】把日志行序倒过来：第一条（最上面）= 最近一次操作，最后一条 = 当天最早那条。
+   设备那边文件是按时间正序追加写的，这里只改“显示顺序”，文件内容与读取逻辑一律不动。 */
+function renderLogDesc(text){
+  if(!text) return "";
+  var note = "";                                   //“当天日志过长”这类提示要留在最末尾
+  var lines = String(text).replace(/\r/g,"").split("\n");
+  var kept = [];
+  for(var i=0;i<lines.length;i++){
+    if(lines[i].indexOf("当天日志过长") >= 0){ note = lines[i]; continue; }
+    kept.push(lines[i]);
+  }
+  while(kept.length && kept[kept.length-1].trim() === "") kept.pop();
+  while(kept.length && kept[0].trim() === "") kept.shift();
+  kept.reverse();                                  // 关键：整段倒序
+  var out = kept.join("\n");
+  if(note) out += (out ? "\n" : "") + note;
+  return out;
+}
 var currentSelectedDate = "";
 var logListGot = false;   // 是否收到过设备回传的 LIST（用于诊断：区分“固件没响应”还是“确实没日志”）
 var autoOpenedToday = false;  // 本次打开弹窗是否已自动加载当天日志
-var logQueryCount = 0;        // 已向设备查询日志列表的次数（用于诊断）
-var logRetryTimer = null;     // 查询重试定时器
-var diagShown = false;        // 是否已显示设备详细诊断（避免被后续 LIST 覆盖）
 
 // 处理日志消息
 function handleLogMessage(s) {
   if(!s) return;
-  if(s.startsWith("DIAG:")){
-    var kv={}, segs=s.substring(5).split(';');
-    for(var i=0;i<segs.length;i++){ var p=segs[i].split('='); if(p.length>=2) kv[p[0]]=p[1]; }
-    var el = document.getElementById('logDiag');
-    if(el){
-      el.style.color = '#0a7d29';
-      el.style.background = '#eafaf0';
-      var L=[];
-      L.push(kv.mount==='1' ? '✅ Flash 文件系统已挂载' : '❌ Flash 文件系统未挂载（Arduino 菜单 Tools→Partition Scheme 必须选含 SPIFFS 的项）');
-      L.push('📁 日志天数：' + (kv.files||'0') + ' 天　已用 ' + (kv.used||'0') + ' / ' + (kv.total||'0') + ' 字节');
-      L.push('📅 设备今天：' + (kv.today||'-') + '　今天日志 ' + (kv.todayLen||'0') + ' 字节');
-      L.push('🕒 时间' + (kv.synced==='1'?'已校准':'未校准') + '　待补录 ' + (kv.buf||'0') + ' 条　UID：' + (kv.uid||'-'));
-      el.innerText = L.join('\n');
-      diagShown = true;
-    }
-    return;
-  }
-  if(s.startsWith("DUMP:")){
-    var dd = s.substring(5);
-    var elD = document.getElementById('logDiag');
-    if(elD && dd) elD.innerText += '\n🗂 设备内日志文件：' + dd;
-    return;
-  }
   if(s.startsWith("TIME_OK:")){
     // 时间校验成功，静默忽略（可自行打 console）
     return;
@@ -534,7 +483,6 @@ function handleLogMessage(s) {
   if(s.startsWith("LIST:")){
     var dates = s.substring(5).trim();
     logListGot = true;   // 收到设备回传，说明固件是新版且在线
-    updateLogDiag();     // 同步诊断条（已有详细诊断时不会被覆盖）
     logDates = {};
     if(dates){
       var arr = dates.split(",");
@@ -543,8 +491,6 @@ function handleLogMessage(s) {
         if(d) logDates[d] = true;
       }
     }
-    // 合并本机镜像里的日期（设备列表之外的本机记录也标蓝）
-    for(var ld in localLog){ if(localLog[ld]) logDates[ld] = true; }
     renderCalendar();
     // 列表返回后：若用户还没手动点日期，自动加载【今天】的日志
     var today = todayYmd();
@@ -554,8 +500,8 @@ function handleLogMessage(s) {
         selectDate(today);          // 今天有记录 → 直接摊开当天日志
       }else{
         document.getElementById('logContent').innerText =
-          dates ? "今天还没有日志记录\n\n蓝色日期表示当天有记录，点击即可查看"
-                : "设备暂无历史日志（可能尚未产生记录或时间未同步）";
+          dates ? "今天还没有日志记录\n\n（只记录关键命令：开机、关机、暂停/恢复、8路任一路开关）\n蓝色日期表示当天有记录，点击即可查看"
+                : "设备暂无历史日志（可能尚未产生记录或时间未同步）\n\n（只记录关键命令：开机、关机、暂停/恢复、8路任一路开关）";
       }
     }
     return;
@@ -563,16 +509,14 @@ function handleLogMessage(s) {
   if(s.startsWith("LOG:")){
     var body = s.substring(4);
     if(body === "END"){
-      // 日志接收完成：设备文本为准，再把本机未回传的记录合并到后面
-      var finalText = mergeLocalInto(currentLogContent, currentSelectedDate);
+      //【改动】日志接收完成 → 倒序显示（最近操作在最上面，最早记录在最下面）
+      var shown = currentLogContent ? renderLogDesc(currentLogContent) : "";
       document.getElementById('logContent').innerText =
-        finalText || (currentSelectedDate + " 当天没有日志记录");
+        shown || (currentSelectedDate + " 当天没有日志记录");
       return;
     }
-    // 【关键】设备端已按行分片回传，每片都自带原始换行，这里必须原样拼接，
-    //  不能再额外加 "\n"，否则日志会被拆成断行
-    currentLogContent += body;
-    // 实时显示，边收边看
+    currentLogContent += body;      //【改动】设备端每段自带换行，这里不再补 "\n"，避免出现空行
+    // 接收过程仍正序实时显示（读取只有零点几秒），收完 END 再整体翻转，避免半行跳动
     document.getElementById('logContent').innerText = currentLogContent;
     return;
   }
@@ -584,59 +528,6 @@ function todayYmd(){
   return "" + n.getFullYear() + ("0"+(n.getMonth()+1)).slice(-2) + ("0"+n.getDate()).slice(-2);
 }
 
-// 诊断条：根据当前状态显示查询进度
-function updateLogDiag(){
-  var el = document.getElementById('logDiag');
-  if(!el) return;
-  if(diagShown){
-    // 已经有详细的设备诊断信息，保留它，只在末尾提示列表已更新
-    if(logListGot && el.innerText.indexOf('日志列表已更新') < 0){
-      el.innerText += '\n✅ 已收到设备的日志日期列表';
-    }
-    return;
-  }
-  if(logListGot){
-    el.style.color = '#0a7d29';
-    el.style.background = '#eafaf0';
-    el.innerText = '✅ 已收到设备回传（共查询 ' + logQueryCount + ' 次）';
-  } else {
-    el.style.color = '#b26a00';
-    el.style.background = '#fff8e1';
-    el.innerText = '⏳ 正在向设备查询日志…（已发 ' + logQueryCount + ' 次）';
-  }
-}
-
-// 单次查询：第一次先同步时间，然后拉取日期列表（重试时不再重复改时间，避免设备时间反复跳）
-function queryLogOnce(){
-  if(!(client && client.connected)) return;
-  if(logQueryCount === 0){
-    var nowTs = Math.floor(new Date().getTime() / 1000);
-    client.publish(TOPIC_LOG+'/set', 'time:' + nowTs, {qos:0});   // 同步时间给设备
-  }
-  pubLog("list");                                                // 查询日志列表
-  logQueryCount++;
-  updateLogDiag();
-}
-
-// 多次查询仍无回传：给出具体排查指引
-function showLogNoReply(){
-  var loc = localLog[currentSelectedDate] || '';
-  if(loc){
-    document.getElementById('logContent').innerText =
-      "⚠ 设备未回传，以下仅为本机浏览器记录（不跨设备）：\n\n" + loc;
-    return;
-  }
-  document.getElementById('logContent').innerText =
-    "⚠ 已多次向设备查询，但未收到任何回传。请排查：\n"+
-    "① ESP32 是否在线（看屏幕剩余时间/状态能否正常刷新）\n"+
-    "② 串口（115200）应打印『【日志系统】SPIFFS 挂载成功』\n"+
-    "   以及『【日志系统】共 N 个日志文件；今天是 YYYYMMDD』——\n"+
-    "   若 N>0 说明日志确实存在 Flash 里，只是回传被挡住\n"+
-    "③ 巴法云 UID 是否正确；网页与设备共用同一 UID 会互相踢下线\n"+
-    "   （页面每 3 分钟自动刷新重连，就是为了缓解这个）\n"+
-    "④ 看上方【设备诊断】条：mount=0 表示分区表没选含 SPIFFS 的项";
-}
-
 // 打开日历
 function openCalendar(){
   var now = new Date();
@@ -646,44 +537,42 @@ function openCalendar(){
   currentSelectedDate = todayYmd();     // 默认选中今天
   logListGot = false;
   autoOpenedToday = false;
-  logQueryCount = 0;
-  diagShown = false;
-  loadLocalLogs();                 // 先读本机镜像
-  logDates = {};
-  for(var ld in localLog){ if(localLog[ld]) logDates[ld] = true; }
-  var dg = document.getElementById('logDiag');
-  if(dg){ dg.innerText = ''; dg.style.color = '#b26a00'; dg.style.background = '#fff8e1'; }
-  document.getElementById('logContent').innerText = "正在加载日志列表...";
+  //【新增】只记“日历是不是开着”这一个界面状态（绝不存日志内容），
+  //  这样刷新/重连后能自动把日历重新打开、重新从设备拉一次日志，不会再“一刷新就空了”
+  try{ sessionStorage.setItem('xiwanjiLogOpen','1'); }catch(e){}
+  document.getElementById('logContent').innerText = "正在从设备读取日志...\n（日志存在 ESP32 的 Flash 里，只有长按 G5 满 10 秒才会清空）";
   document.getElementById('calendarModal').style.display = 'flex';
   renderCalendar();
-  updateLogDiag();
+  // 查询日期列表
   if(client && client.connected){
-    // 先发诊断命令：设备回传 Flash 挂载/空间/文件数，再回传文件清单，一眼定位日志为何为空
-    setTimeout(function(){ pubLog("diag"); }, 300);
-    setTimeout(function(){ pubLog("dump"); }, 900);
-    // 立即查一次，之后每 1.2 秒重试，最多 5 次：
-    //   —— 抗偶发丢包；也对抗「网页与设备共用 UID 互相踢下线」时的短暂离线窗口
-    queryLogOnce();
-    if(logRetryTimer) clearInterval(logRetryTimer);
-    logRetryTimer = setInterval(function(){
-      if(logListGot || logQueryCount >= 5){
-        clearInterval(logRetryTimer); logRetryTimer = null;
-        if(!logListGot) showLogNoReply();
-        return;
+    // 先同步时间给ESP32（/set 才会推送到设备）
+    var nowTs = Math.floor(new Date().getTime() / 1000);
+    client.publish(TOPIC_LOG+'/set', 'time:' + nowTs, {qos:0});
+    // 再查询日志列表
+    setTimeout(function(){
+      pubLog("list");
+    }, 600);
+    // 2.6 秒后若仍未收到设备回传的 LIST，给出明确诊断：
+    //   —— 用于区分“固件无日志功能/设备离线/UID错” 与 “固件正常但确实没日志”
+    setTimeout(function(){
+      if(!logListGot){
+        document.getElementById('logContent').innerText =
+          "⚠ 未收到设备日志回复，请排查：\n"+
+          "① ESP32 是否联网且在线（看屏幕剩余时间/状态能否刷新）\n"+
+          "② 是否烧录了【含日志功能】的最新固件（旧固件无此功能，必现空白）\n"+
+          "③ 巴法云 UID 是否正确\n"+
+          "自检：电脑连 ESP32 串口，看启动是否打印『日志系统 SPIFFS 挂载成功』";
       }
-      queryLogOnce();
-    }, 1200);
+    }, 2600);
   } else {
-    var loc0 = localLog[currentSelectedDate] || '';
-    document.getElementById('logContent').innerText = loc0
-      ? "⚠ 设备未连接，以下仅为本机浏览器记录（不跨设备）：\n\n" + loc0
-      : "MQTT未连接，请稍后再试";
+    document.getElementById('logContent').innerText = "MQTT未连接，请稍后再试";
   }
 }
 
 // 关闭日历
 function closeCalendar(){
   document.getElementById('calendarModal').style.display = 'none';
+  try{ sessionStorage.removeItem('xiwanjiLogOpen'); }catch(e){}
 }
 
 // 上个月
@@ -739,28 +628,27 @@ function selectDate(ymd){
   currentSelectedDate = ymd;      // 记住选中，日历会高亮该日
   currentLogContent = "";
   renderCalendar();               // 立即刷新高亮，给出点击反馈
-  var localHere = localLog[ymd] || '';
   document.getElementById('logContent').innerText = "正在加载 " + ymd + " 的日志...";
   if(client && client.connected){
-    if(localHere) document.getElementById('logContent').innerText = "（等待设备回传，先显示本机记录）\n\n" + localHere;
     pubLog("date:" + ymd);
-    // 1.5 秒后若仍在加载（没收到回传），重发一次，对抗偶发丢包
-    setTimeout(function(){
-      if(document.getElementById('logContent').innerText.indexOf('正在加载') === 0){
-        pubLog("date:" + ymd);
-      }
-    }, 1500);
   } else {
-    document.getElementById('logContent').innerText = localHere
-      ? "⚠ 设备未连接，以下仅为本机浏览器记录（不跨设备）：\n\n" + localHere
-      : "MQTT未连接，请稍后再试";
+    document.getElementById('logContent').innerText = "MQTT未连接，请稍后再试";
   }
 }
 
 boot();
 
-/* ================= 每3分钟自动刷新页面（重新连接、重新提交，恢复正常） ================= */
-setTimeout(function(){ location.reload(); }, 3 * 60 * 1000);
+/* ================= 断线自愈（不再无条件定时刷新） =================
+   原来这里写的是：setTimeout(function(){ location.reload(); }, 3*60*1000)
+   —— 不管连得好不好，3 分钟就硬刷一次。结果就是“日志刚看到，页面自己一刷就没了”，
+   正在看的日历弹窗、已收到的日志内容全部被清空。
+   现在改成：只在【真的断线了】并且【日历弹窗没打开】时才刷新，用来兜底卡死的连接；
+   连接正常时永不刷新。mqtt.js 本身已带 3 秒自动重连，正常情况下用不到这条。 */
+setInterval(function(){
+  var modal = document.getElementById('calendarModal');
+  if(modal && modal.style.display === 'flex') return;        // 正在看日志 → 绝不刷新
+  if(!(client && client.connected)){ location.reload(); }    // 真断线才自愈
+}, 60 * 1000);
 </script>
 </body>
 </html>
